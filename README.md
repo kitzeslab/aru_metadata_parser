@@ -15,7 +15,7 @@ The package is available on PyPI and can be installed with PIP:
 
 Parses metadata from audio files recorded by AudioMoth, storing metadata as a dictionary:
 
-```
+```python
 from aru_metadata_parser import parse
 metadata_dictionary = parse.parse_audiomoth_metadata_from_path("audiomoth_recording.WAV")
 ```
@@ -24,13 +24,13 @@ metadata_dictionary = parse.parse_audiomoth_metadata_from_path("audiomoth_record
 
 Parses audiomoth filenames into datetimes (including hexidecimal names created by early AudioMoth firmware versions). This function assumes the time is provided in UTC unless otherwise specified
 
-```
+```python
 parse.audiomoth_start_time("/path/20200404_102500.WAV") #returns datetime object
 ```
 
 If the file name corresponds to another time zone, we can specify which time zone it refers to:
 
-```
+```python
 parse.audiomoth_start_time("20200404_102500.WAV",filename_timezone="US/Eastern")
 ```
 
