@@ -1,4 +1,4 @@
-"""test for opensoundscape.aru module"""
+"""test for parse module"""
 import datetime
 import pytz
 import pytest
