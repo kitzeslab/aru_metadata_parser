@@ -23,7 +23,7 @@ def hex_to_time(s):
         datetime.datetime object representing the date and time in UTC
     """
     sec = int(s, 16)
-    timestamp = datetime.datetime.utcfromtimestamp(sec).replace(tzinfo=pytz.utc)
+    timestamp = datetime.datetime.fromtimestamp(sec, tz=datetime.timezone.utc)
     return timestamp
 
 

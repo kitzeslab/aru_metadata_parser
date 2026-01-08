@@ -1,9 +1,11 @@
 """test for parse module"""
+
 import datetime
 import pytz
 import pytest
 import math
 from aru_metadata_parser import parse
+import dateutil
 
 
 @pytest.fixture()
@@ -197,3 +199,46 @@ def test_parse_audiomoth_metadata_v16_to_v181():
     new_metadata = parse.parse_audiomoth_metadata(metadata)
     assert new_metadata["gain_setting"] == "medium"
     assert math.isclose(new_metadata["battery_state"], 4.5, abs_tol=1e-5)
+
+
+def test_parse_aru_file_start_time():
+    """test handling of various formats"""
+
+    # various formats across ARUS models and firmware:
+    # Audiomoth hexadecimal unix time: 5F2A1C00 (convert hex to int timestamp and then to datetime)
+    # Audiomoth human-readable: 20220719_000000 (YYYYMMDD_HHMMSS)
+    # SongMeter Micro: SMM03873_20220719_000000.wav (deviceID_YYYYMMDD_HHMMSS)
+    # SongMeter Micro 2: 2MM04797_20241127_155140.wav (deviceID_YYYYMMDD_HHMMSS)
+    # SMM with 2 channels: SBT-6-76-18_0+1_0_20160621_080000.wav (deviceID_YYYYMMDD_HHMMSS)
+    # OwlSense: 55063_2024-11-27_T16-47-33.wav (deviceID_YYYY-MM-DD_THH-MM-SS)
+    # Swift: SwiftOne_20220719_000000_-0400.wav (SwiftOne_YYYYMMDD_HHMMSS_UTCoffset)
+    #
+    test_cases = [
+        (
+            "20220719_000000.WAV",
+            datetime.datetime(2022, 7, 19, 0, 0, 0),
+        ),
+        (
+            "SMM03873_20220719_000000.wav",
+            datetime.datetime(2022, 7, 19, 0, 0, 0),
+        ),
+        (
+            "2MM04797_20241127_155140.wav",
+            datetime.datetime(2024, 11, 27, 15, 51, 40),
+        ),
+        (
+            "SBT-6-76-18_0+1_0_20160621_080000.wav",
+            datetime.datetime(2016, 6, 21, 8, 0, 0),
+        ),
+        (
+            "55063_2024-11-27_T16-47-33.wav",
+            datetime.datetime(2024, 11, 27, 16, 47, 33),
+        ),
+        (
+            "SwiftOne_20220719_000000_-0400.wav",
+            dateutil.parser.parse("20220719 000000 -0400"),
+        ),
+    ]
+    for filename, expected_dt in test_cases:
+        parsed_dt = parse.parse_aru_file_start_time(filename)
+        assert parsed_dt == expected_dt, f"{filename} {parsed_dt} {expected_dt}"
