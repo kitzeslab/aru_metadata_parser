@@ -11,6 +11,90 @@ from dateutil.parser import parse as dateutil_parse
 from dateutil.parser import ParserError
 
 
+class ARUFileTimestampParser:
+    """Parse start times from ARU filenames, caching the last successful strategy.
+
+    When parsing thousands of files with the same naming convention, this avoids
+    retrying earlier (failing) strategies on every call. The first successful
+    strategy is tried first on all subsequent calls; if it fails the full list
+    is tried as a fallback.
+
+    Args:
+        filename_timezone: (str) pytz timezone name for the recorder's clock.
+            If None, returns naive datetime objects unless timezone is encoded in the file name
+            (Does not override timezone if encoded in file name)
+        output_timezone: (str) pytz timezone name to convert results to.
+            Requires filename_timezone to be set.
+            If None, returns timestamps in the timezone specified by
+            `filename_timezone` or as encoded in the file name if available,
+            otherwise returns naive datetime objects
+
+    Example:
+        parser = ARUFileTimestampParser(filename_timezone="UTC", output_timezone="US/Eastern")
+        datetimes = [parser.parse(f) for f in files]
+    """
+
+    def __init__(self, filename_timezone=None, output_timezone=None):
+        self.filename_timezone = filename_timezone
+        self.output_timezone = output_timezone
+        self._last_index = 0
+
+    def _build_strategies(self, name, file):
+        tz, otz = self.filename_timezone, self.output_timezone
+        return [
+            lambda: audiomoth_start_time(
+                name, filename_timezone=tz, output_timezone=otz
+            ),
+            lambda: songmeter_start_time(
+                name, filename_timezone=tz, output_timezone=otz
+            ),
+            lambda: owlsense_start_time(
+                name, filename_timezone=tz, output_timezone=otz
+            ),
+            lambda: swift_start_time(name, output_timezone=otz),
+            lambda: dateutil_parse(name.replace("_", " "), fuzzy=False),
+            lambda: _parse_yyyymmdd_hhmmss_from_parts(name),
+            lambda: _parse_yyyymmdd_hhmmss_from_parts(name, sep="-"),
+            lambda: dateutil_parse(Path(file).stem, fuzzy=True),
+            lambda: dateutil_parse("_".join(name.split("_")[-3:]), fuzzy=True),
+            lambda: dateutil_parse("_".join(name.split("_")[-2:]), fuzzy=True),
+        ]
+
+    def parse(self, file):
+        """Parse start time from an ARU filename.
+
+        Args:
+            file: (str) path or filename of an ARU recording
+        Returns:
+            datetime object
+        """
+        name = Path(file).stem
+        all_strategies = self._build_strategies(name, file)
+        indices = [self._last_index] + [
+            i for i in range(len(all_strategies)) if i != self._last_index
+        ]
+        dt = None
+        for i in indices:
+            try:
+                dt = all_strategies[i]()
+                self._last_index = i
+                break
+            except (ParserError, ValueError):
+                continue
+        if dt is None:
+            raise ValueError(
+                f"could not parse start time from file name: {file} using any available strategy"
+            )
+        if self.filename_timezone is not None and dt.tzinfo is None:
+            dt = pytz.timezone(self.filename_timezone).localize(dt)
+        if self.output_timezone is not None:
+            assert (
+                dt.tzinfo is not None
+            ), "dt must be timezone-aware to convert to output_timezone"
+            dt = dt.astimezone(pytz.timezone(self.output_timezone))
+        return dt
+
+
 def parse_aru_file_start_time(
     file, recorder_type=None, filename_timezone=None, output_timezone=None
 ):
@@ -19,7 +103,9 @@ def parse_aru_file_start_time(
     Wrapper function to parse start time from various ARU recorder file names.
 
     If recorder_type is not provided, attempts to parse arbitrary file name
-    containing date and time information
+    containing date and time information. When parsing many files with the same
+    naming convention, prefer ARUFileTimestampParser which caches the
+    last successful strategy.
 
     Args:
         file: (str) path or file name from ARU recording
@@ -38,81 +124,35 @@ def parse_aru_file_start_time(
         - if filename_timezone is provided, returns timezone-aware datetime object
           localized to `filename_timezone` or `output_timezone` if provided
     """
-    name = Path(file).stem
-    strategies = [
-        # try known recorder-specific parsing functions first
-        lambda: audiomoth_start_time(
-            name,
+    if recorder_type is None:
+        return ARUFileTimestampParser(
             filename_timezone=filename_timezone,
             output_timezone=output_timezone,
-        ),
-        lambda: songmeter_start_time(
-            name,
-            filename_timezone=filename_timezone,
-            output_timezone=output_timezone,
-        ),
-        lambda: owlsense_start_time(
-            name,
-            filename_timezone=filename_timezone,
-            output_timezone=output_timezone,
-        ),
-        lambda: swift_start_time(
-            name,
-            output_timezone=output_timezone,
-        ),
-        # try strict dateutil parsing
-        lambda: dateutil_parse(name.replace("_", " "), fuzzy=False),
-        # try parsing entire filename with dateutil, fuzzy matching
-        lambda: dateutil_parse(Path(file).stem, fuzzy=True),
-        # try subsetting to last 3 underscore-separated parts
-        lambda: dateutil_parse("_".join(name.split("_")[-3:]), fuzzy=True),
-        # try subsetting to last 2 underscore-separated parts
-        lambda: dateutil_parse("_".join(name.split("_")[-2:]), fuzzy=True),
-    ]
-    if recorder_type is None:  # try various parsing strategies
-        dt = None
-        for strategy in strategies:
-            try:
-                dt = strategy()
-                break
-            except (ParserError, ValueError):
-                continue
-        if dt is None:
-            raise ValueError(
-                f"could not parse start time from file name: {file} using any available strategy"
-            )
-        if filename_timezone is not None and dt.tzinfo is None:
-            # localize naive datetime to filename_timezone
-            dt = pytz.timezone(filename_timezone).localize(dt)
-        if output_timezone is not None:
-            assert (
-                dt.tzinfo is not None
-            ), "dt must be timezone-aware to convert to output_timezone"
-            dt = dt.astimezone(pytz.timezone(output_timezone))
-        return dt
+        ).parse(file)
     else:  # user specified recorder type
+        name = Path(file).stem
         recorder_type = recorder_type.lower().strip()
 
         if recorder_type == "audiomoth":
-            dt = audiomoth_start_time(
+            return audiomoth_start_time(
                 name,
                 filename_timezone=filename_timezone,
                 output_timezone=output_timezone,
             )
         elif recorder_type == "songmeter":
-            dt = songmeter_start_time(
+            return songmeter_start_time(
                 name,
                 filename_timezone=filename_timezone,
                 output_timezone=output_timezone,
             )
         elif recorder_type == "owlsense":
-            dt = owlsense_start_time(
+            return owlsense_start_time(
                 name,
                 filename_timezone=filename_timezone,
                 output_timezone=output_timezone,
             )
         elif recorder_type == "swift":
-            dt = swift_start_time(
+            return swift_start_time(
                 name,
                 output_timezone=output_timezone,
             )
@@ -120,6 +160,16 @@ def parse_aru_file_start_time(
             raise ValueError(
                 f"recorder_type {recorder_type} not recognized. must be one of: None, 'audiomoth', 'songmeter',  'owlsense', 'swift'"
             )
+
+
+def _parse_yyyymmdd_hhmmss_from_parts(name, sep="_"):
+    """scan underscore-split parts for a consecutive YYYYMMDD + HHMMSS pair"""
+    parts = name.split(sep)
+    for i in range(len(parts) - 1):
+        a, b = parts[i], parts[i + 1]
+        if len(a) == 8 and a.isnumeric() and len(b) == 6 and b.isnumeric():
+            return datetime.strptime(f"{a}_{b}", "%Y%m%d_%H%M%S")
+    raise ValueError(f"no YYYYMMDD_HHMMSS pair found in: {name}")
 
 
 def swift_start_time(file, output_timezone=None):
@@ -266,7 +316,7 @@ def audiomoth_start_time(
         # HEX filename convention (old firmware)
         if filename_timezone not in ("UTC", None):
             raise ValueError('hexadecimal file names must have filename_timezone="UTC"')
-        localized_dt = hex_to_time(Path(file).stem)  # returns UTC localized dt
+        file_datetime = hex_to_time(Path(file).stem)  # returns UTC localized dt
     elif len(name) == 15:
         # human-readable format (newer firmware)
         file_datetime = datetime.strptime(name, "%Y%m%d_%H%M%S")

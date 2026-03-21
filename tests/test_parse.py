@@ -238,7 +238,62 @@ def test_parse_aru_file_start_time():
             "SwiftOne_20220719_000000_-0400.wav",
             dateutil.parser.parse("20220719 000000 -0400"),
         ),
+        # extra parts before and after the datetime (the motivating case)
+        (
+            "rana_sierrae_2022/mp3/sine2022a_MSD-0558_20220623_073000_0-10s.mp3",
+            datetime.datetime(2022, 6, 23, 7, 30, 0),
+        ),
     ]
     for filename, expected_dt in test_cases:
         parsed_dt = parse.parse_aru_file_start_time(filename)
         assert parsed_dt == expected_dt, f"{filename} {parsed_dt} {expected_dt}"
+
+
+def test_parse_yyyymmdd_hhmmss_from_parts():
+    assert parse._parse_yyyymmdd_hhmmss_from_parts(
+        "sine2022a_MSD-0558_20220623_073000_0-10s"
+    ) == datetime.datetime(2022, 6, 23, 7, 30, 0)
+
+    # first matching pair is used
+    assert parse._parse_yyyymmdd_hhmmss_from_parts(
+        "20220623_073000_20220624_080000"
+    ) == datetime.datetime(2022, 6, 23, 7, 30, 0)
+
+    with pytest.raises(ValueError):
+        parse._parse_yyyymmdd_hhmmss_from_parts("no_date_here")
+
+
+def test_aru_file_timestamp_parser_basic():
+    """ARUFileTimestampParser returns same results as parse_aru_file_start_time"""
+    files = [
+        "SMM03873_20220719_000000.wav",
+        "sine2022a_MSD-0558_20220623_073000_0-10s.mp3",
+    ]
+    parser = parse.ARUFileTimestampParser()
+    for f in files:
+        assert parser.parse(f) == parse.parse_aru_file_start_time(f)
+
+
+def test_aru_file_timestamp_parser_caches_strategy():
+    """last_index advances to the winning strategy and stays there"""
+    parser = parse.ARUFileTimestampParser()
+    assert parser._last_index == 0
+
+    # songmeter format — strategy index 1
+    parser.parse("SMM03873_20220719_000000.wav")
+    songmeter_index = parser._last_index
+
+    # parsing another songmeter file should reuse the same index
+    parser.parse("SMM99999_20230101_120000.wav")
+    assert parser._last_index == songmeter_index
+
+
+def test_aru_file_timestamp_parser_timezone():
+    parser = parse.ARUFileTimestampParser(
+        filename_timezone="UTC", output_timezone="US/Eastern"
+    )
+    dt = parser.parse("SMM03873_20220719_000000.wav")
+    assert dt.tzname() == "EDT"
+    assert dt == pytz.timezone("US/Eastern").localize(
+        datetime.datetime(2022, 7, 18, 20, 0, 0)
+    )
