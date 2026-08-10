@@ -1,10 +1,10 @@
-# aru_metadata_parser
+# ARU Metadata Parser
 Parse audio file metadata from common ARUs including the AudioMoth
 
-This package aims to provide support for parsing metadata from common ARU (autonomous recording unit) audio files. Currently, AudioMoth metadata from firmware versions up to 1.8.1 are supported.
+This package aims to provide support for parsing metadata from common ARU (autonomous recording unit) audio files. Currently, AudioMoth metadata from firmware versions up to at least 1.8.1 are supported.
 
 Please use Issues to report failures in metadata parsing, and to request parsing for other metadata formats. 
-r
+
 ## Installation:
 
 The package is available on PyPI and can be installed with PIP: 
@@ -13,11 +13,43 @@ The package is available on PyPI and can be installed with PIP:
 
 ## Usage
 
-### Parse start time from any ARU filename
+### Efficiently parse recording times from file paths
+The `ARUFileTimestampParser` class parses times stamps from file names created by AudioMoth, Song Meter, OwlSense, and Swift recorders. It tries all known formats automatically before falling back to fuzzy date parsing. It also caches the last successful strategy for efficient parsing of many file names. 
 
-The top-level `parse_aru_file_start_time` function supports AudioMoth, Song Meter, OwlSense, and Swift recorders. If no `recorder_type` is specified, it tries all known formats automatically before falling back to fuzzy date parsing.
+> If you find an ARU file name pattern that does not work, please open an issue with an example of the naming pattern and how file names are generated (e.g., what hardware or software).
 
-If you find an ARU file name pattern that does not work, please open an issue with an example of the naming pattern and how file names are generated (eg what hardware or software).
+```python
+from aru_metadata_parser import parse
+parser = parse.ARUFileTimestampParser(filename_timezone="UTC", output_timezone="US/Eastern")
+datetimes = [parser.parse(f) for f in files]
+```
+
+### Timezone handling
+
+- `filename_timezone`: the timezone the recorder used when constructing its filename (e.g. `"UTC"`, `"US/Eastern"`). If `None`, returns a naive datetime object.
+- `output_timezone`: timezone to convert the result to. Requires `filename_timezone` to be set (except for Swift, which embeds UTC offset in the filename).
+- Timezone strings must be valid [pytz](https://pythonhosted.org/pytz/) timezone names (see `pytz.all_timezones`).
+
+### Parse AudioMoth WAV file metadata
+
+Reads and parses metadata from the WAV header of an AudioMoth recording. Returns a dictionary with keys including `gain_setting`, `battery_state`, `recording_start_time`, `device_id`, and (for firmware >=1.4.0) `temperature_C`:
+
+```python
+from aru_metadata_parser import parse
+# extract AudioMoth recording metadata from a file
+metadata = parse.parse_audiomoth_metadata_from_path("audiomoth_recording.WAV")
+
+# From an already-loaded metadata dictionary
+metadata_dict = 
+metadata = parse.parse_audiomoth_metadata(metadata_dict)
+```
+
+
+
+### Advanced usage
+
+#### Use underlying parser function:
+Optionally specify the recorder type. If no `recorder_type` is specified, it tries each available strategy then fuzzy matching. 
 
 ```python
 from aru_metadata_parser import parse
@@ -34,7 +66,7 @@ dt = parse.parse_aru_file_start_time(
 )
 ```
 
-### Recorder-specific parsing
+#### Recorder-specific parsing
 
 **AudioMoth** — supports both hex filenames (old firmware) and human-readable filenames (new firmware):
 
@@ -69,28 +101,6 @@ dt = parse.owlsense_start_time("OWL_123456_2022-07-19_T00-00-00.WAV", filename_t
 dt = parse.swift_start_time("SwiftOne_20220719_000000_-0400.wav")
 dt = parse.swift_start_time("SwiftOne_20220719_000000_-0400.wav", output_timezone="UTC")
 ```
-
-### Parse AudioMoth WAV file metadata
-
-Reads and parses metadata from the WAV header of an AudioMoth recording. Returns a dictionary with keys including `gain_setting`, `battery_state`, `recording_start_time`, `device_id`, and (for firmware >=1.4.0) `temperature_C`:
-
-```python
-# From a file path
-metadata = parse.parse_audiomoth_metadata_from_path("audiomoth_recording.WAV")
-print(metadata["gain_setting"])        # e.g. 'medium' or 2
-print(metadata["battery_state"])       # e.g. 4.7 (volts)
-print(metadata["recording_start_time"])  # localized datetime
-print(metadata["temperature_C"])       # e.g. 11.2
-
-# From an already-loaded metadata dictionary
-metadata = parse.parse_audiomoth_metadata(metadata_dict)
-```
-
-### Timezone handling
-
-- `filename_timezone`: the timezone the recorder used when constructing its filename (e.g. `"UTC"`, `"US/Eastern"`). If `None`, returns a naive datetime object.
-- `output_timezone`: timezone to convert the result to. Requires `filename_timezone` to be set (except for Swift, which embeds UTC offset in the filename).
-- Timezone strings must be valid [pytz](https://pythonhosted.org/pytz/) timezone names (see `pytz.all_timezones`).
 
 ## Contribution:
 
